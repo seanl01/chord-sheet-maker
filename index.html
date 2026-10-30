@@ -1,0 +1,966 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>html{color-scheme:light}body{margin:0}[hidden]{display:none!important}</style>
+<title>Chord Sheet Maker</title>
+<meta name="description" content="Paste lyrics, click a syllable to place a chord, drag to move it, transpose, and export chord sheets as PDF.">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;600&family=Instrument+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: set list rail on the left, song fields on top, then a text editor beside a live chart.
+   Chords are drawn in ballpoint blue, the way a player pencils them onto a printed sheet. */
+:root {
+  --bg: #f2f5f8;
+  --surface: #ffffff;
+  --sunk: #e7ecf1;
+  --line: #d2d9e1;
+  --fg: #14202b;
+  --muted: #566574;
+  --ink: #1d4ed8;
+  --ink-fg: #ffffff;
+  --ink-soft: #e3ebff;
+  --warn: #a4261a;
+  --shadow: rgba(20, 32, 43, 0.18);
+  --display: 'Bricolage Grotesque', system-ui, sans-serif;
+  --ui: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e141a;
+    --surface: #161f28;
+    --sunk: #1d2832;
+    --line: #2b3844;
+    --fg: #e5ebf1;
+    --muted: #93a2b2;
+    --ink: #86a8ff;
+    --ink-fg: #0b1220;
+    --ink-soft: #1d2c4d;
+    --warn: #ff8f84;
+    --shadow: rgba(0, 0, 0, 0.5);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e141a;
+  --surface: #161f28;
+  --sunk: #1d2832;
+  --line: #2b3844;
+  --fg: #e5ebf1;
+  --muted: #93a2b2;
+  --ink: #86a8ff;
+  --ink-fg: #0b1220;
+  --ink-soft: #1d2c4d;
+  --warn: #ff8f84;
+  --shadow: rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 var(--ui);
+  padding-block: 20px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+button, input, textarea, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+.app { max-width: 1280px; margin: 0 auto; display: grid; gap: 20px; }
+
+/* top bar */
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; }
+.brand { font: 700 22px/1.1 var(--display); letter-spacing: -0.01em; margin: 0; }
+.export { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.note { font-size: 13px; color: var(--muted); margin: 0; }
+
+/* buttons */
+.btn {
+  appearance: none; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 4px;
+  padding: 8px 14px; line-height: 1.2; font-weight: 500;
+}
+.btn:hover:not(:disabled) { border-color: var(--ink); }
+.btn.primary { background: var(--ink); border-color: var(--ink); color: var(--ink-fg); font-weight: 600; }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+.btn.small { padding: 5px 10px; font-size: 13px; }
+.btn.danger { color: var(--warn); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* layout */
+.shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; align-items: start; }
+.rail { position: sticky; top: 16px; min-width: 0; }
+.rail-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.label { font: 600 11px/1.2 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin: 0; }
+.songs { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.song-item {
+  appearance: none; cursor: pointer; width: 100%; text-align: left;
+  display: grid; grid-template-columns: 1.4em minmax(0, 1fr) auto; gap: 8px; align-items: baseline;
+  background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 9px 10px;
+}
+.song-item:hover { background: var(--sunk); }
+.song-item[aria-current="true"] { background: var(--surface); border-color: var(--line); }
+.song-item .n { font: 600 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.song-item[aria-current="true"] .n { color: var(--ink); }
+.song-item .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.song-item .k { font: 600 12px var(--mono); color: var(--muted); }
+
+.main { min-width: 0; display: grid; gap: 18px; }
+.songbar { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 20px; }
+.title-in {
+  flex: 1 1 280px; min-width: 0;
+  font: 700 clamp(24px, 4vw, 34px)/1.15 var(--display); letter-spacing: -0.015em;
+  background: transparent; border: 0; border-bottom: 2px solid var(--line); border-radius: 0; padding: 4px 0 6px;
+}
+.title-in:hover { border-bottom-color: var(--muted); }
+.title-in:focus { outline: none; border-bottom-color: var(--ink); }
+.song-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.song-actions .pos { font: 600 12px var(--mono); color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
+
+.meta { display: grid; grid-template-columns: minmax(0, 2.2fr) repeat(4, minmax(0, 1fr)); gap: 12px; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field input {
+  width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px;
+}
+.field input:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: var(--ink); }
+
+.tabs { display: none; gap: 0; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; width: max-content; max-width: 100%; }
+.tabs button { appearance: none; cursor: pointer; background: var(--surface); border: 0; padding: 8px 18px; font-weight: 500; }
+.tabs button[aria-selected="true"] { background: var(--ink-soft); color: var(--ink); font-weight: 600; }
+
+.work { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 22px; align-items: start; }
+.pane { min-width: 0; display: grid; gap: 10px; }
+.help { font-size: 13px; color: var(--muted); margin: 0; max-width: 62ch; }
+.help code, .help kbd { font: 500 12px var(--mono); background: var(--sunk); padding: 1px 5px; border-radius: 3px; }
+#body {
+  width: 100%; height: min(68vh, 680px); min-height: 360px; resize: vertical;
+  font: 14px/1.6 var(--mono); padding: 12px 14px; tab-size: 4;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 4px;
+}
+#body:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: var(--ink); }
+.edit-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* chart toolbar */
+.tools { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+.tool { display: flex; align-items: center; gap: 8px; }
+.tool output { font: 600 13px var(--mono); min-width: 3.4em; text-align: center; font-variant-numeric: tabular-nums; }
+.pick { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.pick button { appearance: none; cursor: pointer; background: var(--surface); border: 0; padding: 5px 11px; font-size: 13px; }
+.pick button + button { border-left: 1px solid var(--line); }
+.pick button[aria-pressed="true"] { background: var(--ink-soft); color: var(--ink); font-weight: 600; }
+
+/* the sheet */
+.sheet {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 3px;
+  padding: 26px clamp(16px, 4vw, 38px) 32px;
+  box-shadow: 0 14px 28px -22px var(--shadow);
+  --fs: 17px;
+}
+.sheet.size-s { --fs: 15px; }
+.sheet.size-m { --fs: 17px; }
+.sheet.size-l { --fs: 19px; }
+.sh-title { font: 700 clamp(24px, 3.4vw, 30px)/1.15 var(--display); letter-spacing: -0.01em; margin: 0; overflow-wrap: anywhere; }
+.sh-artist { color: var(--muted); margin: 2px 0 0; }
+.sh-meta { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 0 0; padding: 0; list-style: none; font: 600 12px var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.sh-meta li { white-space: nowrap; }
+.sh-meta .v { color: var(--ink); text-transform: none; }
+[hidden] { display: none !important; }
+.sh-rule { border: 0; border-top: 1px solid var(--line); margin: 16px 0 6px; }
+.chart-body { font-size: var(--fs); line-height: 1.35; }
+.sheet.cols-2 .chart-body { columns: 2 250px; column-gap: 32px; }
+.empty { color: var(--muted); margin: 18px 0; max-width: 46ch; }
+
+.line { margin: 0; padding: 2px 0; position: relative; break-inside: avoid; }
+.ps { display: inline-block; vertical-align: bottom; max-width: 100%; }
+.ch {
+  display: block; min-height: 1.5em; padding-right: 0.6em; white-space: pre; cursor: pointer;
+  font: 600 0.82em/1.5 var(--mono); color: var(--ink);
+}
+.ch[data-cs]:hover { text-decoration: underline dotted; text-underline-offset: 3px; }
+.ch[data-cs] { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.ch.dragging { opacity: 0.3; }
+body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select: none; -webkit-user-select: none; }
+.ghost {
+  position: fixed; z-index: 50; pointer-events: none; transform: translate(-50%, -135%);
+  background: var(--ink); color: var(--ink-fg); border-radius: 4px; padding: 2px 9px;
+  font: 600 15px/1.5 var(--mono); box-shadow: 0 8px 18px -6px var(--shadow);
+}
+.marker { position: fixed; z-index: 45; pointer-events: none; width: 14px; margin-left: -7px; }
+.marker::before { content: ''; position: absolute; left: 6px; top: 0; bottom: 8px; width: 2px; background: var(--ink); opacity: 0.55; }
+.marker::after {
+  content: ''; position: absolute; left: 0; bottom: 0; border: 7px solid transparent;
+  border-top-width: 0; border-bottom: 9px solid var(--ink);
+}
+.ly { display: block; min-height: 1.5em; line-height: 1.5; white-space: pre-wrap; }
+.c { cursor: cell; }
+.c:hover { background: var(--ink-soft); box-shadow: inset 2px 0 0 var(--ink); }
+.line.nochords .ch { display: none; }
+.eol {
+  display: inline-block; vertical-align: bottom; width: 1.6em; min-height: 1.5em; text-align: center; cursor: pointer;
+  font: 600 0.8em/1.9 var(--mono); color: var(--ink); opacity: 0;
+}
+.line:hover .eol, .eol:focus-visible { opacity: 0.75; }
+@media (hover: none) { .eol { opacity: 0.4; } }
+.head {
+  font: 600 12px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+  margin: 1.3em 0 0.45em; break-after: avoid;
+}
+.head:first-child { margin-top: 0.6em; }
+.blank { height: 0.7em; }
+
+/* chord popover */
+.pop {
+  position: absolute; z-index: 30; width: 290px; max-width: calc(100vw - 24px);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px;
+  box-shadow: 0 18px 36px -12px var(--shadow); display: grid; gap: 10px;
+}
+.pop-row { display: flex; gap: 8px; }
+.pop input {
+  flex: 1; min-width: 0; font: 600 16px var(--mono); padding: 7px 10px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 4px;
+}
+.pop input:focus { outline: 2px solid var(--ink); outline-offset: -1px; border-color: var(--ink); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  appearance: none; cursor: pointer; background: var(--ink-soft); color: var(--ink);
+  border: 1px solid transparent; border-radius: 4px; padding: 4px 9px; font: 600 14px var(--mono);
+}
+.chip:hover { border-color: var(--ink); }
+
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%); z-index: 40;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  background: var(--fg); color: var(--bg); border-radius: 4px; padding: 9px 16px; font-size: 14px;
+  max-width: calc(100vw - 32px); opacity: 0; pointer-events: none; transition: opacity 0.15s;
+}
+.toast.on { opacity: 1; }
+
+@media (max-width: 959px) {
+  .work { grid-template-columns: minmax(0, 1fr); }
+  .tabs { display: flex; }
+  .work[data-view="chart"] .pane-edit { display: none; }
+  .work[data-view="edit"] .pane-chart { display: none; }
+  .meta { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .meta .f-artist { grid-column: 1 / -1; }
+}
+@media (max-width: 859px) {
+  .shell { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .rail { position: static; }
+  .songs { display: flex; overflow-x: auto; gap: 6px; padding-bottom: 4px; }
+  .songs li { flex: 0 0 auto; }
+  .song-item { width: auto; min-width: 150px; max-width: 240px; }
+}
+@media (max-width: 520px) {
+  .meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <h1 class="brand">Chord Sheet Maker</h1>
+    <div class="export">
+      <button id="exportOne" class="btn primary" type="button" disabled>Export PDF</button>
+      <button id="exportAll" class="btn" type="button" disabled>Export set as one PDF</button>
+      <p id="exportNote" class="note" hidden></p>
+    </div>
+  </header>
+
+  <div class="shell">
+    <nav class="rail" aria-label="Set list">
+      <div class="rail-head">
+        <h2 class="label">Set list</h2>
+        <button id="addSong" class="btn small" type="button">New song</button>
+      </div>
+      <ol id="songList" class="songs"></ol>
+    </nav>
+
+    <main class="main">
+      <div class="songbar">
+        <input id="fTitle" class="title-in" type="text" aria-label="Song title" placeholder="Song title" autocomplete="off">
+        <div class="song-actions">
+          <span id="pos" class="pos"></span>
+          <button id="moveUp" class="btn small" type="button" aria-label="Move earlier in the set">Move up</button>
+          <button id="moveDown" class="btn small" type="button" aria-label="Move later in the set">Move down</button>
+          <button id="dupSong" class="btn small" type="button">Duplicate</button>
+          <button id="delSong" class="btn small danger" type="button">Delete</button>
+        </div>
+      </div>
+
+      <div class="meta">
+        <label class="field f-artist"><span class="label">Artist or writer</span><input id="fArtist" type="text" autocomplete="off"></label>
+        <label class="field"><span class="label">Key</span><input id="fKey" type="text" placeholder="G" autocomplete="off"></label>
+        <label class="field"><span class="label">Capo</span><input id="fCapo" type="text" placeholder="none" autocomplete="off"></label>
+        <label class="field"><span class="label">Tempo</span><input id="fTempo" type="text" inputmode="numeric" placeholder="BPM" autocomplete="off"></label>
+        <label class="field"><span class="label">Time</span><input id="fTime" type="text" placeholder="4/4" autocomplete="off"></label>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="View">
+        <button id="tabEdit" type="button" role="tab" aria-selected="false" data-view="edit">Lyrics</button>
+        <button id="tabChart" type="button" role="tab" aria-selected="true" data-view="chart">Chart</button>
+      </div>
+
+      <div id="work" class="work" data-view="chart">
+        <section class="pane pane-edit" aria-label="Lyrics and chords">
+          <h2 class="label">Lyrics and chords</h2>
+          <p class="help">Paste your lyrics here. Lines such as <code>Verse 1</code> or <code>[Chorus]</code> become section headings. To type a chord yourself, put it in brackets right before the syllable: <code>[G]Amazing [C]grace</code>.</p>
+          <textarea id="body" spellcheck="false" aria-label="Lyrics with chords in brackets"></textarea>
+          <div class="edit-actions">
+            <button id="copyText" class="btn small" type="button">Copy text</button>
+          </div>
+        </section>
+
+        <section class="pane pane-chart" aria-label="Chart">
+          <h2 class="label">Chart</h2>
+          <div class="tools" id="tools">
+            <div class="tool">
+              <span class="label">Transpose</span>
+              <button id="trDown" class="btn small" type="button" aria-label="Down one semitone">&minus;</button>
+              <output id="trKey" aria-live="polite"></output>
+              <button id="trUp" class="btn small" type="button" aria-label="Up one semitone">+</button>
+            </div>
+            <div class="tool">
+              <span class="label">Paper</span>
+              <div class="pick" role="group" aria-label="Paper size" data-opt="paper">
+                <button type="button" data-val="letter">Letter</button><button type="button" data-val="a4">A4</button>
+              </div>
+            </div>
+            <div class="tool">
+              <span class="label">Text</span>
+              <div class="pick" role="group" aria-label="Text size" data-opt="size">
+                <button type="button" data-val="s">Small</button><button type="button" data-val="m">Medium</button><button type="button" data-val="l">Large</button>
+              </div>
+            </div>
+            <div class="tool">
+              <span class="label">Columns</span>
+              <div class="pick" role="group" aria-label="Columns" data-opt="cols">
+                <button type="button" data-val="1">1</button><button type="button" data-val="2">2</button>
+              </div>
+            </div>
+          </div>
+          <p class="help">Click a word or syllable to put a chord before it. Drag a chord sideways, or onto another line, to move it. Click a chord to change or remove it. The PDF uses this layout.</p>
+          <article id="sheet" class="sheet">
+            <h3 id="shTitle" class="sh-title"></h3>
+            <p id="shArtist" class="sh-artist"></p>
+            <ul id="shMeta" class="sh-meta"></ul>
+            <hr class="sh-rule">
+            <p id="empty" class="empty" hidden>Nothing here yet. Paste lyrics on the Lyrics side and they will appear here, ready for chords.</p>
+            <div id="chartBody" class="chart-body"></div>
+          </article>
+        </section>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div id="pop" class="pop" role="dialog" aria-labelledby="popTitle" hidden>
+  <h2 id="popTitle" class="label">Add chord here</h2>
+  <div class="pop-row">
+    <input id="chordIn" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="G, Am7, D/F#" aria-label="Chord">
+    <button id="popOk" class="btn primary small" type="button">Set</button>
+  </div>
+  <div id="chips" class="chips"></div>
+  <div class="pop-row">
+    <button id="popRemove" class="btn small danger" type="button">Remove chord</button>
+    <button id="popClose" class="btn small" type="button">Close</button>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var STORE = 'chord-sheet-maker.v1';
+
+  /* ---------- chord theory ---------- */
+  var CHORD_RE = /^[A-G](?:#|b)?(?:maj|min|dim|aug|sus|add|m|M|\+|°|ø|-|[0-9]|\([^)]*\)|#|b)*(?:\/[A-G](?:#|b)?)?$/;
+  var HEAD_RE = /^(?:intro|verse|chorus|pre-?chorus|post-?chorus|bridge|outro|tag|interlude|instrumental|ending|refrain|turnaround|coda|vamp|hook)(?:[\s-]*(?:\d+|x\d+|\d+x|\([^)]*\)))*\s*:?$/i;
+  var NOTES_S = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  var NOTES_F = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+  var FLAT_KEYS = ['F', 'Bb', 'Eb', 'Ab', 'Db', 'Gb', 'Dm', 'Gm', 'Cm', 'Fm', 'Bbm', 'Ebm'];
+
+  function noteIdx(n) {
+    var i = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[n.charAt(0)];
+    if (n.charAt(1) === '#') i += 1;
+    if (n.charAt(1) === 'b') i -= 1;
+    return (i + 12) % 12;
+  }
+  function tNote(n, k, flats) { return (flats ? NOTES_F : NOTES_S)[(noteIdx(n) + k + 12) % 12]; }
+  function tChord(label, k, flats) {
+    var m = label.match(/^([A-G][#b]?)(.*?)(?:\/([A-G][#b]?))?$/);
+    if (!m) return label;
+    return tNote(m[1], k, flats) + m[2] + (m[3] ? '/' + tNote(m[3], k, flats) : '');
+  }
+  function diatonic(key) {
+    var m = (key || '').trim().match(/^([A-G][#b]?)(m|min)?$/);
+    if (!m) return [];
+    var r = noteIdx(m[1]);
+    if (m[2]) r = (r + 3) % 12;
+    var N = FLAT_KEYS.indexOf(key.trim()) >= 0 ? NOTES_F : NOTES_S;
+    var steps = [0, 2, 4, 5, 7, 9], q = ['', 'm', 'm', '', '', 'm'];
+    return steps.map(function (st, i) { return N[(r + st) % 12] + q[i]; });
+  }
+
+  /* ---------- parsing ---------- */
+  function parseLyric(raw, off) {
+    var chars = [], chords = [], re = /\[([^\[\]]*)\]/g, last = 0, m, i;
+    function pushText(a, b) { for (i = a; i < b; i++) chars.push({ ch: raw.charAt(i), off: off + i }); }
+    while ((m = re.exec(raw))) {
+      pushText(last, m.index);
+      var label = m[1].trim();
+      if (label) chords.push({ pos: chars.length, label: label, s: off + m.index, e: off + m.index + m[0].length });
+      last = m.index + m[0].length;
+    }
+    pushText(last, raw.length);
+    return { type: 'lyric', chars: chars, chords: chords, end: off + raw.length };
+  }
+  function parseSong(body) {
+    var out = [], off = 0;
+    body.split('\n').forEach(function (raw) {
+      var t = raw.trim(), m = t.match(/^\[([^\[\]]+)\]$/);
+      if (t === '') out.push({ type: 'blank' });
+      else if (m && !CHORD_RE.test(m[1].trim())) out.push({ type: 'head', text: m[1].trim() });
+      else if (t.indexOf('[') < 0 && HEAD_RE.test(t)) out.push({ type: 'head', text: t.replace(/:$/, '') });
+      else out.push(parseLyric(raw, off));
+      off += raw.length + 1;
+    });
+    return out;
+  }
+
+  /* ---------- state ---------- */
+  var uid = function () { return Math.random().toString(36).slice(2, 9); };
+  var SAMPLE_BODY = [
+    '[Verse 1]',
+    '[G]Amazing [G7]grace, how [C]sweet the [G]sound,',
+    'That [G]saved a wretch like [D]me.',
+    'I [G]once was lost, but [C]now am [G]found,',
+    'Was [Em]blind, but [D]now I [G]see.'
+  ].join('\n');
+  function blankSong() { return { id: uid(), title: 'Untitled song', artist: '', key: '', capo: '', tempo: '', time: '', body: '' }; }
+  function sampleSong() {
+    return { id: uid(), title: 'Amazing Grace', artist: 'John Newton, 1779 (public domain example)', key: 'G', capo: '', tempo: '72', time: '3/4', body: SAMPLE_BODY };
+  }
+  function load() {
+    try {
+      var r = localStorage.getItem(STORE);
+      if (!r) return null;
+      var s = JSON.parse(r);
+      if (!s || !Array.isArray(s.songs) || !s.songs.length) return null;
+      s.opts = Object.assign({ paper: 'letter', size: 'm', cols: 1 }, s.opts || {});
+      if (!s.songs.some(function (x) { return x.id === s.current; })) s.current = s.songs[0].id;
+      return s;
+    } catch (e) { return null; }
+  }
+  var state = load();
+  if (!state) {
+    var first = sampleSong();
+    state = { songs: [first], current: first.id, opts: { paper: 'letter', size: 'm', cols: 1 } };
+  }
+  var saveTimer = null;
+  function save() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () { try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) {} }, 250);
+  }
+  function cur() { return state.songs.filter(function (s) { return s.id === state.current; })[0]; }
+  function curIndex() { return state.songs.indexOf(cur()); }
+
+  var toastTimer = null;
+  function toast(msg) {
+    var t = $('toast'); t.textContent = msg; t.classList.add('on');
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.classList.remove('on'); }, 2600);
+  }
+
+  /* ---------- rendering ---------- */
+  function renderList() {
+    var ol = $('songList'); ol.textContent = '';
+    state.songs.forEach(function (s, i) {
+      var li = document.createElement('li'), b = document.createElement('button');
+      b.type = 'button'; b.className = 'song-item'; b.dataset.id = s.id;
+      b.setAttribute('aria-current', s.id === state.current ? 'true' : 'false');
+      var n = document.createElement('span'); n.className = 'n'; n.textContent = String(i + 1);
+      var t = document.createElement('span'); t.className = 't'; t.textContent = s.title || 'Untitled song';
+      var k = document.createElement('span'); k.className = 'k'; k.textContent = s.key || '';
+      b.append(n, t, k); li.appendChild(b); ol.appendChild(li);
+    });
+    var idx = curIndex();
+    $('pos').textContent = 'Song ' + (idx + 1) + ' of ' + state.songs.length;
+    $('moveUp').disabled = idx === 0;
+    $('moveDown').disabled = idx === state.songs.length - 1;
+    $('exportAll').textContent = state.songs.length > 1 ? 'Export set (' + state.songs.length + ' songs) as one PDF' : 'Export set as one PDF';
+  }
+  var FIELDS = { fTitle: 'title', fArtist: 'artist', fKey: 'key', fCapo: 'capo', fTempo: 'tempo', fTime: 'time' };
+  function fillFields() {
+    var s = cur();
+    Object.keys(FIELDS).forEach(function (id) { $(id).value = s[FIELDS[id]] || ''; });
+    $('body').value = s.body;
+  }
+  function renderOpts() {
+    document.querySelectorAll('.pick').forEach(function (g) {
+      var key = g.dataset.opt;
+      g.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(state.opts[key]) === b.dataset.val ? 'true' : 'false'); });
+    });
+    $('sheet').className = 'sheet size-' + state.opts.size + ' cols-' + state.opts.cols;
+  }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function lyricEl(line) {
+    var div = el('div', 'line' + (line.chords.length ? '' : ' nochords'));
+    var parts = [], prevPos = 0, prevChord = null;
+    line.chords.forEach(function (c) {
+      parts.push({ chord: prevChord, chars: line.chars.slice(prevPos, c.pos) });
+      prevChord = c; prevPos = c.pos;
+    });
+    parts.push({ chord: prevChord, chars: line.chars.slice(prevPos) });
+    parts.forEach(function (p, i) {
+      if (i === 0 && !p.chord && !p.chars.length) return;
+      var ps = el('span', 'ps'), ch = el('span', 'ch'), ly = el('span', 'ly');
+      if (p.chord) { ch.textContent = p.chord.label; ch.dataset.cs = p.chord.s; ch.dataset.ce = p.chord.e; }
+      else ch.textContent = ' ';
+      p.chars.forEach(function (c) {
+        var s = el('span', 'c', c.ch); s.dataset.off = c.off; ly.appendChild(s);
+      });
+      ps.append(ch, ly); div.appendChild(ps);
+    });
+    if (line.chars.length) {
+      var eol = el('span', 'eol', '+'); eol.dataset.off = line.end; eol.title = 'Add a chord at the end of this line';
+      div.appendChild(eol);
+    }
+    return div;
+  }
+  function renderChart() {
+    var s = cur(), body = $('chartBody');
+    $('shTitle').textContent = s.title || 'Untitled song';
+    $('shArtist').textContent = s.artist || ''; $('shArtist').hidden = !s.artist;
+    var meta = $('shMeta'); meta.textContent = '';
+    [['Key', s.key], ['Capo', s.capo], ['Tempo', s.tempo ? s.tempo + ' BPM' : ''], ['Time', s.time]].forEach(function (p) {
+      if (!p[1]) return;
+      var li = el('li'); li.append(document.createTextNode(p[0] + ' '), el('span', 'v', p[1])); meta.appendChild(li);
+    });
+    meta.hidden = !meta.children.length;
+    body.textContent = '';
+    $('empty').hidden = !!s.body.trim();
+    if (s.body.trim()) {
+      parseSong(s.body).forEach(function (ln) {
+        if (ln.type === 'blank') body.appendChild(el('div', 'blank'));
+        else if (ln.type === 'head') body.appendChild(el('div', 'head', ln.text));
+        else body.appendChild(lyricEl(ln));
+      });
+    }
+    $('trKey').textContent = s.key ? s.key : 'no key';
+    renderOpts();
+  }
+  function renderAll() { renderList(); fillFields(); renderChart(); }
+
+  /* ---------- editing ---------- */
+  function setBody(nb, keepScroll) {
+    var s = cur(), ta = $('body'), st = ta.scrollTop;
+    s.body = nb; ta.value = nb; if (keepScroll) ta.scrollTop = st;
+    renderChart(); save();
+  }
+  Object.keys(FIELDS).forEach(function (id) {
+    $(id).addEventListener('input', function () {
+      cur()[FIELDS[id]] = $(id).value;
+      if (id === 'fTitle' || id === 'fKey') renderList();
+      renderChart(); save();
+    });
+  });
+  $('body').addEventListener('input', function () { closePop(); cur().body = $('body').value; renderChart(); save(); });
+
+  $('songList').addEventListener('click', function (e) {
+    var b = e.target.closest('.song-item'); if (!b) return;
+    state.current = b.dataset.id; closePop(); armDelete(false); renderAll(); save();
+  });
+  $('addSong').addEventListener('click', function () {
+    var s = blankSong(); state.songs.push(s); state.current = s.id; closePop(); renderAll(); save();
+    $('work').dataset.view = 'edit'; syncTabs(); $('fTitle').focus(); $('fTitle').select();
+  });
+  function move(d) {
+    var i = curIndex(), j = i + d; if (j < 0 || j >= state.songs.length) return;
+    var t = state.songs[i]; state.songs[i] = state.songs[j]; state.songs[j] = t; renderList(); save();
+  }
+  $('moveUp').addEventListener('click', function () { move(-1); });
+  $('moveDown').addEventListener('click', function () { move(1); });
+  $('dupSong').addEventListener('click', function () {
+    var c = Object.assign({}, cur(), { id: uid(), title: (cur().title || 'Untitled song') + ' copy' });
+    state.songs.splice(curIndex() + 1, 0, c); state.current = c.id; renderAll(); save(); toast('Duplicated');
+  });
+  var delArmed = false, delTimer = null;
+  function armDelete(on) {
+    delArmed = on; clearTimeout(delTimer);
+    $('delSong').textContent = on ? 'Confirm delete' : 'Delete';
+    if (on) delTimer = setTimeout(function () { armDelete(false); }, 3500);
+  }
+  $('delSong').addEventListener('click', function () {
+    if (!delArmed) { armDelete(true); return; }
+    var i = curIndex(); state.songs.splice(i, 1);
+    if (!state.songs.length) state.songs.push(blankSong());
+    state.current = state.songs[Math.min(i, state.songs.length - 1)].id;
+    armDelete(false); closePop(); renderAll(); save(); toast('Song deleted');
+  });
+  $('copyText').addEventListener('click', function () {
+    var ta = $('body'), text = ta.value;
+    function fallback() { ta.focus(); ta.select(); toast('Text selected. Press Ctrl+C or Cmd+C to copy.'); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { toast('Copied'); }, fallback);
+    } else fallback();
+  });
+
+  /* transpose */
+  function transpose(k) {
+    var s = cur(), flats;
+    if (s.key && s.key.trim()) flats = FLAT_KEYS.indexOf(tChord(s.key.trim(), k, true)) >= 0;
+    else flats = /\[[A-G]b/.test(s.body);
+    var nb = s.body.replace(/\[([^\[\]]*)\]/g, function (m, x) {
+      var t = x.trim();
+      return CHORD_RE.test(t) ? '[' + tChord(t, k, flats) + ']' : m;
+    });
+    if (s.key && /^[A-G][#b]?m?$/.test(s.key.trim())) { s.key = tChord(s.key.trim(), k, flats); $('fKey').value = s.key; renderList(); }
+    setBody(nb, true);
+  }
+  $('trUp').addEventListener('click', function () { transpose(1); });
+  $('trDown').addEventListener('click', function () { transpose(-1); });
+
+  /* options and tabs */
+  $('tools').addEventListener('click', function (e) {
+    var b = e.target.closest('.pick button'); if (!b) return;
+    var key = b.parentNode.dataset.opt;
+    state.opts[key] = key === 'cols' ? Number(b.dataset.val) : b.dataset.val;
+    renderOpts(); save();
+  });
+  function syncTabs() {
+    var v = $('work').dataset.view;
+    $('tabEdit').setAttribute('aria-selected', String(v === 'edit'));
+    $('tabChart').setAttribute('aria-selected', String(v === 'chart'));
+  }
+  document.querySelector('.tabs').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    $('work').dataset.view = b.dataset.view; syncTabs(); closePop();
+  });
+
+  /* ---------- chord popover ---------- */
+  var pop = null;
+  function usedChords() {
+    var seen = [], re = /\[([^\[\]]*)\]/g, m, body = cur().body;
+    while ((m = re.exec(body))) { var t = m[1].trim(); if (CHORD_RE.test(t) && seen.indexOf(t) < 0) seen.push(t); }
+    return seen;
+  }
+  function renderChips() {
+    var box = $('chips'); box.textContent = '';
+    var list = diatonic(cur().key);
+    usedChords().forEach(function (c) { if (list.indexOf(c) < 0) list.push(c); });
+    list.slice(0, 14).forEach(function (c) {
+      var b = el('button', 'chip', c); b.type = 'button'; box.appendChild(b);
+    });
+  }
+  function openPop(target, info) {
+    pop = info;
+    var p = $('pop');
+    $('popTitle').textContent = info.cs == null ? 'Add chord here' : 'Change chord';
+    $('popRemove').hidden = info.cs == null;
+    $('chordIn').value = info.label || '';
+    renderChips();
+    p.hidden = false;
+    var r = target.getBoundingClientRect();
+    var left = r.left + window.scrollX, maxLeft = window.scrollX + document.documentElement.clientWidth - p.offsetWidth - 12;
+    p.style.left = Math.max(window.scrollX + 12, Math.min(left, maxLeft)) + 'px';
+    p.style.top = (r.bottom + window.scrollY + 8) + 'px';
+    $('chordIn').focus(); $('chordIn').select();
+  }
+  function closePop() { pop = null; $('pop').hidden = true; }
+  function applyChord(label) {
+    if (!pop) return;
+    label = label.trim().replace(/[\[\]\n]/g, '');
+    var b = cur().body, nb;
+    if (pop.cs != null) nb = b.slice(0, pop.cs) + (label ? '[' + label + ']' : '') + b.slice(pop.ce);
+    else if (label) nb = b.slice(0, pop.off) + '[' + label + ']' + b.slice(pop.off);
+    else { closePop(); return; }
+    closePop(); setBody(nb, true);
+  }
+  $('chartBody').addEventListener('click', function (e) {
+    if (suppressClick) return;
+    var chEl = e.target.closest('.ch');
+    if (chEl && chEl.dataset.cs) {
+      openPop(chEl, { off: +chEl.dataset.cs, cs: +chEl.dataset.cs, ce: +chEl.dataset.ce, label: chEl.textContent });
+      return;
+    }
+    var t = e.target.closest('.c, .eol');
+    if (!t) return;
+    var off = +t.dataset.off, body = cur().body;
+    var m = body.slice(Math.max(0, off - 40), off).match(/\[([^\[\]\n]*)\]$/);
+    openPop(t, m ? { off: off, cs: off - m[0].length, ce: off, label: m[1].trim() } : { off: off, cs: null, ce: null, label: '' });
+  });
+  $('chips').addEventListener('click', function (e) {
+    var b = e.target.closest('.chip'); if (b) applyChord(b.textContent);
+  });
+  $('popOk').addEventListener('click', function () { applyChord($('chordIn').value); });
+  $('popRemove').addEventListener('click', function () { applyChord(''); });
+  $('popClose').addEventListener('click', closePop);
+  $('chordIn').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); applyChord($('chordIn').value); }
+    else if (e.key === 'Escape') { e.preventDefault(); closePop(); }
+  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && pop) closePop(); });
+  document.addEventListener('pointerdown', function (e) {
+    if (pop && !e.target.closest('#pop') && !e.target.closest('#chartBody')) closePop();
+  });
+
+  /* ---------- drag a chord sideways ---------- */
+  var drag = null, ghost = null, marker = null, suppressClick = false;
+  function findTarget(x, y) {
+    var best = null, bd = 1e9;
+    [].forEach.call($('chartBody').querySelectorAll('.line'), function (l) {
+      var r = l.getBoundingClientRect();
+      var dy = y < r.top ? r.top - y : (y > r.bottom ? y - r.bottom : 0);
+      var dx = x < r.left ? r.left - x : (x > r.right ? x - r.right : 0);
+      if (dy + dx < bd) { bd = dy + dx; best = l; }
+    });
+    if (!best) return null;
+    var pick = null, ps = 1e9;
+    [].forEach.call(best.querySelectorAll('.c, .eol'), function (c) {
+      var r = c.getBoundingClientRect();
+      var dy = y < r.top ? r.top - y : (y > r.bottom ? y - r.bottom : 0);
+      var s = dy * 4 + Math.abs(x - r.left);
+      if (s < ps) { ps = s; pick = { off: +c.dataset.off, left: r.left, top: r.top, h: r.height }; }
+    });
+    return pick;
+  }
+  function endDrag() {
+    if (drag && drag.el) drag.el.classList.remove('dragging');
+    if (ghost) ghost.remove();
+    if (marker) marker.remove();
+    ghost = marker = drag = null;
+    document.body.classList.remove('is-dragging');
+  }
+  function moveChord(cs, ce, off) {
+    if (off >= cs && off <= ce) return;
+    var b = cur().body, tok = b.slice(cs, ce), nb = b.slice(0, cs) + b.slice(ce);
+    var t = off > ce ? off - (ce - cs) : off;
+    setBody(nb.slice(0, t) + tok + nb.slice(t), true);
+  }
+  $('chartBody').addEventListener('pointerdown', function (e) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    var chEl = e.target.closest('.ch');
+    if (!chEl || !chEl.dataset.cs) return;
+    drag = { el: chEl, id: e.pointerId, x0: e.clientX, y0: e.clientY, active: false,
+      cs: +chEl.dataset.cs, ce: +chEl.dataset.ce, label: chEl.textContent, target: null };
+    try { chEl.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  document.addEventListener('pointermove', function (e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    if (!drag.active) {
+      if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 5) return;
+      drag.active = true; closePop();
+      drag.el.classList.add('dragging'); document.body.classList.add('is-dragging');
+      ghost = el('div', 'ghost', drag.label);
+      ghost.style.fontSize = getComputedStyle(drag.el).fontSize;
+      marker = el('div', 'marker');
+      document.body.append(marker, ghost);
+    }
+    e.preventDefault();
+    ghost.style.left = e.clientX + 'px'; ghost.style.top = e.clientY + 'px';
+    drag.target = findTarget(e.clientX, e.clientY);
+    if (drag.target) {
+      marker.hidden = false;
+      marker.style.left = drag.target.left + 'px';
+      marker.style.top = drag.target.top + 'px';
+      marker.style.height = (drag.target.h + 8) + 'px';
+    } else marker.hidden = true;
+  }, { passive: false });
+  document.addEventListener('pointerup', function (e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    var d = drag, moved = d.active;
+    endDrag();
+    if (moved) {
+      suppressClick = true; setTimeout(function () { suppressClick = false; }, 0);
+      if (d.target) moveChord(d.cs, d.ce, d.target.off);
+    }
+  });
+  document.addEventListener('pointercancel', function () { endDrag(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && drag && drag.active) endDrag(); });
+
+  /* ---------- PDF ---------- */
+  var downloads = null;
+  function pdfClean(s) {
+    return s.replace(/♯/g, '#').replace(/♭/g, 'b').replace(/\t/g, ' ')
+      .replace(/[^\x20-\x7E -ÿ–—‘’“”•…]/g, '?');
+  }
+  function wrapRanges(doc, t, maxW) {
+    if (!t.length) return [[0, 0]];
+    var words = [], re = /\S+\s*/g, m, ranges = [], ls = 0, le = 0;
+    while ((m = re.exec(t))) words.push({ s: m.index, e: m.index + m[0].length, e2: m.index + m[0].replace(/\s+$/, '').length });
+    words.forEach(function (w) {
+      if (doc.getTextWidth(t.slice(ls, w.e2)) > maxW && le > ls) { ranges.push([ls, le]); ls = w.s; }
+      le = w.e;
+    });
+    ranges.push([ls, t.length]);
+    return ranges;
+  }
+  function songToPdf(doc, song, opts, first) {
+    if (!first) doc.addPage();
+    var PW = doc.internal.pageSize.getWidth(), PH = doc.internal.pageSize.getHeight();
+    var M = 54, gap = 26, cols = Number(opts.cols) || 1;
+    var colW = (PW - 2 * M - gap * (cols - 1)) / cols;
+    var fs = { s: 10.5, m: 12, l: 14 }[opts.size] || 12;
+    var INK = [29, 78, 216], TXT = [22, 28, 36], MUTE = [104, 116, 130];
+
+    /* header */
+    var y = M;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(22); doc.setTextColor(TXT[0], TXT[1], TXT[2]);
+    doc.splitTextToSize(pdfClean(song.title || 'Untitled song'), PW - 2 * M).forEach(function (ln) { y += 26; doc.text(ln, M, y); });
+    if (song.artist) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(11); doc.setTextColor(MUTE[0], MUTE[1], MUTE[2]);
+      y += 17; doc.text(pdfClean(song.artist), M, y);
+    }
+    var bits = [];
+    if (song.key) bits.push('Key ' + song.key);
+    if (song.capo) bits.push('Capo ' + song.capo);
+    if (song.tempo) bits.push(song.tempo + ' BPM');
+    if (song.time) bits.push(song.time);
+    if (bits.length) {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(TXT[0], TXT[1], TXT[2]);
+      y += 17; doc.text(pdfClean(bits.join('     ')), M, y);
+    }
+    y += 12; doc.setDrawColor(190, 198, 208); doc.setLineWidth(0.6); doc.line(M, y, PW - M, y);
+    var top = y + 20;
+
+    /* blocks */
+    var blocks = [];
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(fs);
+    parseSong(song.body || '').forEach(function (ln) {
+      if (ln.type === 'blank') { blocks.push({ kind: 'blank', pre: 0, h: fs * 0.7, draw: function () {} }); return; }
+      if (ln.type === 'head') {
+        blocks.push({ kind: 'head', pre: fs * 0.9, h: fs * 1.5, draw: function (x, yy) {
+          doc.setFont('helvetica', 'bold'); doc.setFontSize(fs * 0.82); doc.setTextColor(MUTE[0], MUTE[1], MUTE[2]);
+          doc.text(pdfClean(ln.text).toUpperCase(), x, yy + fs * 1.0);
+        } });
+        return;
+      }
+      var t = ln.chars.map(function (c) { return pdfClean(c.ch); }).join('');
+      var chords = ln.chords.map(function (c) { return { pos: c.pos, label: pdfClean(c.label) }; });
+      if (!t.trim() && chords.length) {
+        blocks.push({ kind: 'lyric', pre: 0, h: fs * 1.2 + fs * 0.5, draw: function (x, yy) {
+          doc.setFont('helvetica', 'bold'); doc.setFontSize(fs); doc.setTextColor(INK[0], INK[1], INK[2]);
+          var cx = x;
+          chords.forEach(function (c) { doc.text(c.label, cx, yy + fs * 0.95); cx += doc.getTextWidth(c.label) + fs * 1.3; });
+        } });
+        return;
+      }
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(fs);
+      var ranges = wrapRanges(doc, t, colW);
+      ranges.forEach(function (r, ri) {
+        var a = r[0], b = r[1], isLast = ri === ranges.length - 1;
+        var sub = t.slice(a, b).replace(/\s+$/, '');
+        var cs = chords.filter(function (c) { return c.pos >= a && (isLast ? c.pos <= b : c.pos < b); });
+        var CH = cs.length ? fs * 1.2 : 0;
+        blocks.push({ kind: 'lyric', pre: 0, h: CH + fs * 1.4, draw: function (x, yy) {
+          if (cs.length) {
+            doc.setFontSize(fs); doc.setTextColor(INK[0], INK[1], INK[2]);
+            var prev = -1e9;
+            cs.forEach(function (c) {
+              doc.setFont('helvetica', 'normal');
+              var cx = x + doc.getTextWidth(t.slice(a, c.pos));
+              doc.setFont('helvetica', 'bold');
+              if (cx < prev + 5) cx = prev + 5;
+              doc.text(c.label, cx, yy + fs * 0.95);
+              prev = cx + doc.getTextWidth(c.label);
+            });
+          }
+          doc.setFont('helvetica', 'normal'); doc.setFontSize(fs); doc.setTextColor(TXT[0], TXT[1], TXT[2]);
+          doc.text(sub, x, yy + CH + fs * 0.98);
+        } });
+      });
+    });
+
+    /* flow into columns and pages */
+    var col = 0, yy = top, colTop = top;
+    function nextColumn() {
+      if (col < cols - 1) { col++; yy = colTop; }
+      else { doc.addPage(); col = 0; colTop = M; yy = M; }
+    }
+    for (var i = 0; i < blocks.length; i++) {
+      var b = blocks[i];
+      if (b.kind === 'blank' && yy === colTop) continue;
+      var pre = yy === colTop ? 0 : b.pre;
+      var need = pre + b.h + (b.kind === 'head' && blocks[i + 1] ? blocks[i + 1].h : 0);
+      if (yy + need > PH - M && yy > colTop) {
+        nextColumn();
+        if (b.kind === 'blank') continue;
+        pre = 0;
+      }
+      yy += pre;
+      b.draw(M + col * (colW + gap), yy);
+      yy += b.h;
+    }
+  }
+  function fileName(s) {
+    var n = (s || 'Chord sheet').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '').replace(/\s+/g, ' ').trim();
+    return (n || 'Chord sheet') + '.pdf';
+  }
+  function exportPdf(all) {
+    var songs = all ? state.songs : [cur()];
+    if (!all && !cur().body.trim()) { toast('Add some lyrics first.'); return; }
+    var doc;
+    try {
+      var J = window.jspdf.jsPDF;
+      doc = new J({ unit: 'pt', format: state.opts.paper === 'a4' ? 'a4' : 'letter' });
+      songs.forEach(function (s, i) { songToPdf(doc, s, state.opts, i === 0); });
+    } catch (err) { toast('Could not build the PDF: ' + (err && err.message ? err.message : 'unknown error')); return; }
+    var name = all ? 'Set list chord sheets.pdf' : fileName(cur().title);
+    downloads.save({ filename: name, data: doc.output('arraybuffer') }).then(
+      function () { toast('Saved ' + name); },
+      function (err) {
+        if (err && err.code === 'declined') return;
+        toast('Could not save the PDF' + (err && err.message ? ': ' + err.message : '.'));
+      }
+    );
+  }
+  function updateExportUi() {
+    var ready = !!(downloads && window.jspdf && window.jspdf.jsPDF), note = $('exportNote');
+    $('exportOne').disabled = !ready; $('exportAll').disabled = !ready;
+    if (ready) note.hidden = true;
+    else if (!(window.jspdf && window.jspdf.jsPDF)) { note.textContent = 'The PDF library did not load. Reload the page to try again.'; note.hidden = false; }
+    else if (downloads === false) { note.textContent = 'Saving PDFs works when this page is open in Claude.'; note.hidden = false; }
+  }
+  $('exportOne').addEventListener('click', function () { exportPdf(false); });
+  $('exportAll').addEventListener('click', function () { exportPdf(true); });
+
+  /* ---------- start ---------- */
+  renderAll(); syncTabs(); updateExportUi();
+  (async function () {
+    try {
+      var d = window.claude && window.claude.use ? await window.claude.use('downloads') : null;
+      downloads = d || {
+        save: function (r) {
+          return new Promise(function (resolve, reject) {
+            try {
+              var url = URL.createObjectURL(new Blob([r.data], { type: 'application/pdf' }));
+              var a = document.createElement('a'); a.href = url; a.download = r.filename;
+              document.body.appendChild(a); a.click(); a.remove();
+              setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+              resolve({ status: 'saved' });
+            } catch (err) { reject({ code: 'unavailable', message: err.message }); }
+          });
+        }
+      };
+    } catch (e) { downloads = false; }
+    updateExportUi();
+  })();
+})();
+</script>
+
+</body>
+</html>
